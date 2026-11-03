@@ -170,6 +170,75 @@ describe("buildRequest", () => {
   });
 });
 
+describe("response hardening", () => {
+  const run = () => executeForemanRequest({ method: "GET", path: "/api/x" }, {}, { credentials: CREDS });
+
+  it("rejects early on a large Content-Length", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200, headers: { "content-length": String(11 * 1024 * 1024) } })));
+    const result = await run();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("response is too large");
+  });
+
+  it("cancels a streamed body that exceeds the cap", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(97);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 20) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
+    const result = await run();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("response is too large");
+    expect(sent).toBeLessThan(20);
+  });
+
+  it("redacts settings, parameters and sensitive keys but not harmless ones", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      results: [
+        { id: 1, name: "root_pass", value: "hunter2-fake", default: "d-fake" },
+        { id: 2, name: "login_text", value: "welcome" },
+      ],
+      parameters: [{ name: "ssh_key", value: "ssh-rsa FAKE" }, { name: "ntp_server", value: "pool.ntp.org" }],
+      host: { id: 3, host_id: 4, keyboard: "us", monkey: "x", root_pass: "fake-root", api_key: "fake-k", sshKey: "fake", private_key: "fake" },
+    })));
+    const result = await run();
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        results: [
+          { id: 1, name: "root_pass", value: "[REDACTED]", default: "[REDACTED]" },
+          { id: 2, name: "login_text", value: "welcome" },
+        ],
+        parameters: [{ name: "ssh_key", value: "[REDACTED]" }, { name: "ntp_server", value: "pool.ntp.org" }],
+        host: { id: 3, host_id: 4, keyboard: "us", monkey: "x", root_pass: "[REDACTED]", api_key: "[REDACTED]", sshKey: "[REDACTED]", private_key: "[REDACTED]" },
+      },
+    });
+  });
+
+  it("surfaces the network error cause and a CA hint for TLS failures", async () => {
+    const tls = Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("unable to verify the first certificate"), { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" }) });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw tls; }));
+    const result = await run();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("network");
+      expect(result.error.message).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      expect(result.error.message).toContain("FOREMAN_CA_CERT_FILE");
+    }
+    const refused = Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:1"), { code: "ECONNREFUSED" }) });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw refused; }));
+    const r2 = await run();
+    if (!r2.ok) {
+      expect(r2.error.message).toContain("ECONNREFUSED");
+      expect(r2.error.message).not.toContain("FOREMAN_CA_CERT_FILE");
+    }
+  });
+});
+
 describe("executeForemanRequest", () => {
   it("sends Basic auth, the version 2 Accept header and the declared body", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ host: { id: 1 } }));

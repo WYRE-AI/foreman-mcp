@@ -63,6 +63,14 @@ describe("Foreman handler", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects mail_to on schedule_report as an undeclared argument", async () => {
+    const fetchMock = mockFetch();
+    const result = await callForemanTool("foreman_report_templates_schedule_report", { id: 1, mail_to: "attacker@example.invalid" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("mail_to");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects __proto__ / constructor arguments and never forwards them", async () => {
     const fetchMock = mockFetch();
     const polluted = JSON.parse('{"id":"h1","__proto__":{"admin":true},"constructor":{"x":1}}');

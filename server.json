@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.asachs01/foreman-mcp",
+  "name": "io.github.WYRE-AI/foreman-mcp",
   "title": "Foreman",
   "description": "MCP server for the Foreman REST API.",
   "repository": {
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/asachs01/foreman-mcp:0.0.0",
+      "identifier": "ghcr.io/wyre-ai/foreman-mcp:0.0.0",
       "transport": {
         "type": "stdio"
       },

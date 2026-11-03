@@ -33,6 +33,7 @@ describe("resolveS2sSecret", () => {
       "x".repeat(40), "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "0".repeat(40),
       "your-secret-goes-here-please-replace", "your_s2s_secret_value_goes_here_1234", "CHANGEME-" + "a".repeat(30),
       "replace-with-a-real-secret-value-please",
+      "a".repeat(40), "1".repeat(40), "-".repeat(40), "Z".repeat(64), "A".repeat(32),
     ];
     for (const value of cases) {
       expect(withExit(() => resolveS2sSecret({ CONDUIT_S2S_SECRET: value })), value).toBe("exit:1");
@@ -40,6 +41,10 @@ describe("resolveS2sSecret", () => {
       if (value.length > 12) expect(logged).not.toContain(value);
     }
     err.mockRestore();
+  });
+  it("accepts a real hex secret", () => {
+    const hex = "9f2c4be07a1d83c65e0b7f4a2d19c8e3b5a60714d2f8e9c3a1b7d5e60f482c9a";
+    expect(resolveS2sSecret({ CONDUIT_S2S_SECRET: hex }).secret).toBe(hex);
   });
   it("rejects a short secret even with MCP_ALLOW_INSECURE_DEV=1; empty+dev is allowed", () => {
     expect(withExit(() => resolveS2sSecret({ CONDUIT_S2S_SECRET: "tiny", MCP_ALLOW_INSECURE_DEV: "1" }))).toBe("exit:1");

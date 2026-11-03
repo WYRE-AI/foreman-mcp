@@ -57,6 +57,9 @@ const KNOWN_PLACEHOLDER_SECRETS = new Set([
 /** Pattern placeholders such as "xxxxxxxx..." or "your-secret-here". */
 const PLACEHOLDER_PATTERN = /^(x+|0+|your[-_ ]?(s2s[-_ ])?secret.*|change[-_ ]?me.*|replace[-_ ]?(with|me).*)$/i;
 
+/** A secret that is a single character repeated ("aaaa...", "1111...", "----..."). */
+const REPEATED_CHAR_PATTERN = /^(.)\1*$/su;
+
 const LOOPBACK_HOST = "127.0.0.1";
 const MISSING_S2S_SECRET_ERROR =
   "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is empty. " +
@@ -99,7 +102,7 @@ export function isLoopbackBindHost(host: string): boolean {
 export function resolveS2sSecret(env: NodeJS.ProcessEnv = process.env): { secret: string; insecureDev: boolean } {
   // SECURITY-REVIEW: S2S secret resolution (fail closed; dev bypass only when the secret is empty).
   const raw = (env.CONDUIT_S2S_SECRET ?? "").trim();
-  if (raw && (KNOWN_PLACEHOLDER_SECRETS.has(raw.toLowerCase()) || PLACEHOLDER_PATTERN.test(raw))) {
+  if (raw && (KNOWN_PLACEHOLDER_SECRETS.has(raw.toLowerCase()) || PLACEHOLDER_PATTERN.test(raw) || REPEATED_CHAR_PATTERN.test(raw.toLowerCase()))) {
     refuseStart(PLACEHOLDER_S2S_SECRET_ERROR);
   }
   if (raw && raw.length < 32) {
