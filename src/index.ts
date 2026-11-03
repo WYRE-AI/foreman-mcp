@@ -1,4 +1,27 @@
 #!/usr/bin/env node
+/**
+ * Foreman MCP Server
+ *
+ * One MCP tool per Foreman REST API v2 endpoint, grouped by tier
+ * (read | write | admin). Only the tiers listed in FOREMAN_TOOL_TIERS
+ * (default "read") are listed or callable.
+ *
+ * Transports:
+ * - stdio (default): FOREMAN_BASE_URL, FOREMAN_USERNAME and FOREMAN_TOKEN from the environment.
+ *   An unset FOREMAN_BASE_URL does not stop startup; every tool call then returns an error.
+ * - http: stateless Streamable HTTP (a fresh Server + Transport per POST /mcp).
+ *   FOREMAN_BASE_URL is required; startup exits 1 without it.
+ *
+ * Auth modes (HTTP only):
+ * - env (default): credentials from the process environment.
+ * - gateway: per-request X-Foreman-Username / X-Foreman-Token headers. Gateway mode
+ *   never falls back to environment credentials.
+ *
+ * HTTP transport refuses to start unless CONDUIT_S2S_SECRET is a real value of at
+ * least 32 characters (placeholders are rejected). MCP_ALLOW_INSECURE_DEV=1 is a
+ * local-only escape hatch for an empty secret. /mcp also enforces a Host allow-list
+ * (MCP_ALLOWED_HOSTS) and a 1 MiB body limit. /health and /healthz never read credentials.
+ */
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse, Server as HttpServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -8,14 +31,44 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { FOREMAN_ENDPOINTS } from "./tools/registry.js";
 import { getEnabledTiers } from "./tiers.js";
 import { callForemanTool } from "./utils/handler.js";
-import { getCredentials, getBaseUrl, runWithCredentials, resolveGatewayCredentials } from "./utils/client.js";
+import { getCredentials, getBaseUrl, runWithCredentials, resolveRequestCredentials } from "./utils/client.js";
+import type { ForemanCredentials } from "./utils/types.js";
 import { logger } from "./utils/logger.js";
 import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
 
+/**
+ * Public example values. A copied placeholder must not verify as a real secret.
+ * Matched after trim + lowercase, so "Change-Me" is the same as "change-me".
+ */
+// SECURITY-REVIEW: placeholder deny-list for the S2S secret.
+const KNOWN_PLACEHOLDER_SECRETS = new Set([
+  "replace-with-a-real-secret",
+  "your-s2s-secret",
+  "your-secret",
+  "changeme",
+  "change-me",
+  "placeholder",
+  "secret",
+  "example",
+  "replace-me",
+  "s2s-secret",
+]);
+
+/** Pattern placeholders such as "xxxxxxxx..." or "your-secret-here". */
+const PLACEHOLDER_PATTERN = /^(x+|0+|your[-_ ]?(s2s[-_ ])?secret.*|change[-_ ]?me.*|replace[-_ ]?(with|me).*)$/i;
+
 const LOOPBACK_HOST = "127.0.0.1";
-const MISSING_S2S_SECRET_ERROR = "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is empty.";
-const PLACEHOLDER_S2S_SECRET_ERROR = "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is a known placeholder.";
-const INSECURE_DEV_WARNING = "SECURITY WARNING: CONDUIT_S2S_SECRET is empty and MCP_ALLOW_INSECURE_DEV=1. HTTP /mcp is starting with service-to-service authentication DISABLED, bound to 127.0.0.1 only.";
+const MISSING_S2S_SECRET_ERROR =
+  "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is empty. " +
+  "Set CONDUIT_S2S_SECRET to the gateway-provisioned secret (openssl rand -hex 32), " +
+  "or set MCP_ALLOW_INSECURE_DEV=1 for local development only.";
+const PLACEHOLDER_S2S_SECRET_ERROR =
+  "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is a known placeholder. " +
+  "Generate a secret with `openssl rand -hex 32` and set CONDUIT_S2S_SECRET to that value.";
+const INSECURE_DEV_WARNING =
+  "SECURITY WARNING: CONDUIT_S2S_SECRET is empty and MCP_ALLOW_INSECURE_DEV=1. " +
+  "HTTP /mcp is starting with service-to-service authentication DISABLED, bound to 127.0.0.1 only. " +
+  "Local development only; do not expose this port.";
 
 function refuseStart(message: string): never {
   logger.error(message);
@@ -26,7 +79,8 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function isLoopbackBindHost(host: string): boolean {
+/** 127.0.0.1, the rest of 127.0.0.0/8, localhost, and ::1. */
+export function isLoopbackBindHost(host: string): boolean {
   const normalized = host.trim().toLowerCase().replace(/^\[(.+)\]$/, "$1");
   if (normalized === "localhost" || normalized === "::1") return true;
   const bare = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
@@ -36,10 +90,20 @@ function isLoopbackBindHost(host: string): boolean {
   return parts[0] === "127";
 }
 
-function resolveS2sSecret(env: NodeJS.ProcessEnv = process.env): { secret: string; insecureDev: boolean } {
+/**
+ * Fail closed. A known placeholder is never a configured secret, including
+ * when MCP_ALLOW_INSECURE_DEV=1 is also set. Empty is the only case the dev
+ * flag may bypass, and that bypass does not check X-Gateway-S2S.
+ * The secret value is never written to logs.
+ */
+export function resolveS2sSecret(env: NodeJS.ProcessEnv = process.env): { secret: string; insecureDev: boolean } {
+  // SECURITY-REVIEW: S2S secret resolution (fail closed; dev bypass only when the secret is empty).
   const raw = (env.CONDUIT_S2S_SECRET ?? "").trim();
-  if (raw && ["replace-with-a-real-secret", "your-s2s-secret", "your-secret", "changeme", "change-me", "placeholder", "secret", "example", "replace-me", "s2s-secret"].includes(raw.toLowerCase())) {
+  if (raw && (KNOWN_PLACEHOLDER_SECRETS.has(raw.toLowerCase()) || PLACEHOLDER_PATTERN.test(raw))) {
     refuseStart(PLACEHOLDER_S2S_SECRET_ERROR);
+  }
+  if (raw && raw.length < 32) {
+    refuseStart("Refusing to start HTTP transport: CONDUIT_S2S_SECRET must be at least 32 characters (openssl rand -hex 32).");
   }
   if (raw) return { secret: raw, insecureDev: false };
   if (env.MCP_ALLOW_INSECURE_DEV === "1") return { secret: "", insecureDev: true };
@@ -75,6 +139,10 @@ export function createFreshServer(): Server {
         name: endpoint.toolName,
         description: endpoint.description,
         inputSchema: endpoint.inputSchema,
+        annotations: {
+          readOnlyHint: endpoint.tier === "read",
+          destructiveHint: endpoint.tier === "admin",
+        },
       })),
   }));
 
@@ -96,8 +164,44 @@ export function createFreshServer(): Server {
 async function handleMcpRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  credentials?: ReturnType<typeof getCredentials>,
+  credentials?: ForemanCredentials,
 ): Promise<void> {
+  // Bound buffering before handing a parsed body to the SDK (including chunked uploads).
+  let parsedBody: unknown;
+  if (req.method === "POST") {
+    const limit = 1024 * 1024;
+    const tooLarge = () => {
+      if (res.headersSent) return;
+      res.writeHead(413, { "Content-Type": "application/json", Connection: "close" });
+      res.end(JSON.stringify({ error: "Request body exceeds 1 MiB" }));
+      req.resume();
+    };
+    if (Number(req.headers["content-length"]) > limit) {
+      tooLarge();
+      return;
+    }
+    try {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      // Early return must not destroy the socket before the 413 is flushed.
+      for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += buffer.length;
+        if (size > limit) {
+          tooLarge();
+          return;
+        }
+        chunks.push(buffer);
+      }
+      parsedBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON request body" }));
+      }
+      return;
+    }
+  }
   const server = createFreshServer();
   const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
   res.on("close", () => {
@@ -107,9 +211,9 @@ async function handleMcpRequest(
   try {
     await server.connect(transport);
     if (credentials) {
-      await runWithCredentials(credentials, () => transport.handleRequest(req, res));
+      await runWithCredentials(credentials, () => transport.handleRequest(req, res, parsedBody));
     } else {
-      await transport.handleRequest(req, res);
+      await transport.handleRequest(req, res, parsedBody);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -130,36 +234,74 @@ async function startStdioTransport(): Promise<void> {
 
 export async function startHttpTransport(): Promise<HttpServer> {
   const { secret: s2sSecret, insecureDev } = resolveS2sSecret();
-  const port = parseInt(process.env.MCP_HTTP_PORT || "8080", 10);
+  const rawPort = process.env.MCP_HTTP_PORT ?? "8080";
+  if (!/^\d+$/.test(rawPort) || Number(rawPort) < 1 || Number(rawPort) > 65535) {
+    refuseStart("Refusing to start HTTP transport: MCP_HTTP_PORT must be an integer between 1 and 65535.");
+  }
+  const port = Number(rawPort);
   const host = resolveBindHost(s2sSecret);
-  if (insecureDev) logger.error(INSECURE_DEV_WARNING);
+  if (insecureDev) {
+    // error level so LOG_LEVEL=warn|error cannot hide the bypass.
+    logger.error(INSECURE_DEV_WARNING);
+  }
+  // SECURITY-REVIEW: auth mode selection. Anything other than env|gateway is refused.
   const authMode = (process.env.AUTH_MODE || "env").trim();
   if (authMode !== "env" && authMode !== "gateway") {
     refuseStart(`Refusing to start HTTP transport: AUTH_MODE must be "env" or "gateway" (got "${authMode}").`);
   }
   const isGatewayMode = authMode === "gateway";
-  if (!isGatewayMode && !getCredentials()) {
-    logger.warn("AUTH_MODE=env but FOREMAN_USERNAME or FOREMAN_TOKEN is not set; tool calls will return an authentication error.");
+  if (!isGatewayMode) {
+    const credentials = getCredentials();
+    if ("error" in credentials) {
+      logger.warn(`AUTH_MODE=env but Foreman credentials are not set: ${credentials.error}`);
+    }
   }
 
+  const checkHost = process.env.MCP_ALLOWED_HOSTS !== undefined || !s2sSecret || isLoopbackBindHost(host);
+  const configuredHosts = (process.env.MCP_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean);
+  for (const entry of configuredHosts) {
+    if (entry.includes(":") && !/^\[[0-9a-f:]+\]$/i.test(entry)) {
+      logger.warn(`MCP_ALLOWED_HOSTS entry "${entry}" contains a port or unbracketed IPv6 address and will never match.`);
+    }
+  }
+  const allowedHosts = new Set([
+    "localhost", "127.0.0.1", "[::1]",
+    ...configuredHosts.map((h) => h.toLowerCase()),
+  ]);
+
   const httpServer = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url || "/", "http://localhost");
+
+    // Shallow, unauthenticated liveness probe. Must NOT read credentials or call upstream.
     if (url.pathname === "/health" || url.pathname === "/healthz") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
       return;
     }
+
+    // Match the entire Host authority, allowing only an optional numeric port.
+    const authority = req.headers.host?.toLowerCase();
+    const hostMatch = authority?.match(/^(\[[0-9a-f:]+\]|[a-z0-9.-]+)(?::([0-9]{1,5}))?$/);
+    if (checkHost && (!hostMatch || (hostMatch[2] !== undefined && (Number(hostMatch[2]) < 1 || Number(hostMatch[2]) > 65535)) || !allowedHosts.has(hostMatch[1]))) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Host not allowed" }));
+      return;
+    }
+
     if (url.pathname === "/mcp") {
+      // SECURITY-REVIEW: X-Gateway-S2S check. Enforced before any Foreman credential is read.
+      // Empty s2sSecret is only reachable when MCP_ALLOW_INSECURE_DEV=1.
       if (s2sSecret && !verifyS2sHeader(headerValue(req.headers[S2S_HEADER]), s2sSecret)) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Missing or invalid X-Gateway-S2S header: this endpoint only accepts requests signed by the gateway." }));
         return;
       }
       if (isGatewayMode) {
-        const { credentials, error } = resolveGatewayCredentials((name) => headerValue(req.headers[name]));
-        if (!credentials) {
+        // SECURITY-REVIEW: gateway credential path. Reject explicitly when missing; never fall through to env.
+        const credentials = getCredentials(undefined, (name) => headerValue(req.headers[name.toLowerCase()]));
+        if ("error" in credentials) {
           res.writeHead(401, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Missing credentials", message: error, required: ["x-foreman-username", "x-foreman-token"] }));
+          res.end(JSON.stringify({ error: "Missing credentials", message: credentials.error, required: ["x-foreman-username", "x-foreman-token"] }));
           return;
         }
         void handleMcpRequest(req, res, credentials);
@@ -190,8 +332,14 @@ export async function startHttpTransport(): Promise<HttpServer> {
 
 async function main() {
   const transportType = process.env.MCP_TRANSPORT || "stdio";
-  const baseUrl = getBaseUrl();
-  const tiers = [...getEnabledTiers()];
+  // Fail fast on bad configuration (before accepting any request). In stdio mode an
+  // UNSET FOREMAN_BASE_URL is allowed so the server can start and every tool returns a
+  // clear is_error (the CI canary relies on this). A set-but-invalid value, and any
+  // problem in http mode, still fails startup.
+  const baseUrlUnsetInStdio = transportType !== "http" && !(process.env.FOREMAN_BASE_URL ?? "").trim();
+  const baseUrl = baseUrlUnsetInStdio ? undefined : getBaseUrl();
+  if (baseUrlUnsetInStdio) logger.warn("FOREMAN_BASE_URL is not set; tools will return an error until it is configured.");
+  const tiers = [...getEnabledTiers()]; // throws on an unknown tier name
   logger.info("Starting Foreman MCP server", {
     transport: transportType,
     apiUrl: baseUrl,
@@ -212,8 +360,9 @@ async function main() {
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
   } else {
-    if (!getCredentials()) {
-      logger.warn("FOREMAN_USERNAME or FOREMAN_TOKEN is not set; tool calls will return an authentication error.");
+    const credentials = resolveRequestCredentials();
+    if ("error" in credentials) {
+      logger.warn(`Foreman credentials are not usable: ${credentials.error}`);
     }
     await startStdioTransport();
   }

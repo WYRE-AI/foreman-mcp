@@ -18,5 +18,29 @@ jobs:
     uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-release.yml@2b0b056bd7544937e5cbd56cf2e1ff8a180a411f
     with:
       server-name: foreman-mcp
-      image-name: ghcr.io/asachs01/foreman-mcp
+      image-name: ghcr.io/wyre-ai/foreman-mcp
     secrets: inherit
+
+  # DEPLOY TEMPORARILY DISABLED.
+  #
+  # The Container App for this vendor still runs in the LEGACY Azure tenant,
+  # while this org's AZURE_* secrets point at the new WYRE AI tenant where no
+  # `mcp-gateway-prod` resource group exists yet. Deploying would fail with
+  # ResourceGroupNotFound. Re-enable once either (a) the fleet infra moves to
+  # the WYRE AI subscription, or (b) the legacy tenant's deploy app gains a
+  # repo:WYRE-AI/* federated credential and the AZURE_* secrets are
+  # repo/environment-scoped back to the legacy tenant.
+  #
+  # deploy:
+  #   needs: release
+  #   if: needs.release.outputs.released == 'true'
+  #   permissions:
+  #     id-token: write
+  #     contents: read
+  #   uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-deploy.yml@2b0b056bd7544937e5cbd56cf2e1ff8a180a411f
+  #   with:
+  #     vendor-slug: foreman
+  #     image-name: ghcr.io/wyre-ai/foreman-mcp
+  #     digest: ${{ needs.release.outputs.digest }}
+  #     version: ${{ needs.release.outputs.version }}
+  #   secrets: inherit

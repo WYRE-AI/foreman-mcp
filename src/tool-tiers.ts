@@ -11,5 +11,5 @@ export const TOOL_TIERS: Record<string, ToolTierInfo> = Object.fromEntries(
 );
 
 export const OPERATION_TO_TOOL: Record<string, string> = Object.fromEntries(
-  FOREMAN_ENDPOINTS.map((endpoint) => [endpoint.path, endpoint.toolName]),
+  FOREMAN_ENDPOINTS.map((endpoint) => [`${endpoint.method} ${endpoint.path}`, endpoint.toolName]),
 );

@@ -33,7 +33,14 @@
         },
         {
           "name": "FOREMAN_BASE_URL",
-          "description": "Foreman API base URL",
+          "description": "Foreman base URL (https; required)",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "FOREMAN_TOOL_TIERS",
+          "description": "Tiers to expose: read, write, admin (default read)",
           "isRequired": false,
           "isSecret": false,
           "format": "string"
