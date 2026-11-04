@@ -18,8 +18,17 @@ describe("Foreman tool registry", () => {
     expect(new Set(FOREMAN_ENDPOINTS.map((endpoint) => `${endpoint.method} ${endpoint.path}`)).size).toBe(72);
   });
 
-  it("reports 47 read, 16 write, and 9 admin tools", () => {
-    expect(counts()).toEqual({ read: 47, write: 16, admin: 9 });
+  it("reports 47 read, 13 write, and 12 admin tools", () => {
+    expect(counts()).toEqual({ read: 47, write: 13, admin: 12 });
+  });
+
+  it("puts host create/update and host group update at admin", () => {
+    for (const name of ["foreman_hosts_create", "foreman_host_update", "foreman_hostgroup_update"]) {
+      expect(TOOL_TIERS[name].tier).toBe("admin");
+    }
+    for (const name of ["foreman_host_power", "foreman_host_boot", "foreman_hosts_bulk_change_power_state", "foreman_hosts_bulk_reassign_hostgroups", "foreman_host_rebuild_config"]) {
+      expect(TOOL_TIERS[name].tier).toBe("write");
+    }
   });
 
   it("keeps schema/tiers.json in sync with the registry", () => {
@@ -66,16 +75,19 @@ describe("Foreman tool registry", () => {
 describe("tier policy", () => {
   const admin = FOREMAN_ENDPOINTS.filter((endpoint) => endpoint.tier === "admin").map((endpoint) => endpoint.toolName).sort();
 
-  it("keeps admin for irreversible actions and access changes only", () => {
+  it("keeps admin for irreversible actions, access changes, and host/host group create-update", () => {
     expect(admin).toEqual([
       "foreman_config_report_delete",
       "foreman_host_delete",
       "foreman_host_interface_delete",
       "foreman_host_status_delete",
+      "foreman_host_update",
       "foreman_hostgroup_delete",
+      "foreman_hostgroup_update",
       "foreman_hosts_bulk_build",
       "foreman_hosts_bulk_change_owner",
       "foreman_hosts_bulk_delete",
+      "foreman_hosts_create",
       "foreman_setting_update",
     ]);
     const tier = (name: string) => FOREMAN_ENDPOINTS.find((endpoint) => endpoint.toolName === name)!.tier;

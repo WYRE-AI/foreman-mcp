@@ -72,8 +72,8 @@ Tools outside the enabled tiers are neither listed nor callable.
 | Tier | Tools | What it covers |
 |---|---|---|
 | `read` (default) | 47 | Read-only `GET` endpoints. |
-| `write` | 16 | Create/update and operational actions. Power, boot and bulk power tools (`foreman_host_power`, `foreman_host_boot`, `foreman_hosts_bulk_change_power_state`) **affect real machines**. |
-| `admin` | 9 | Irreversible actions and access/permission changes. |
+| `write` | 13 | Create/update and operational actions. Power, boot and bulk power tools (`foreman_host_power`, `foreman_host_boot`, `foreman_hosts_bulk_change_power_state`) **affect real machines**. |
+| `admin` | 12 | Irreversible actions, access/permission changes, and host create/update and host group update (`foreman_hosts_create`, `foreman_host_update`, `foreman_hostgroup_update`). |
 
 The admin tools:
 
@@ -88,7 +88,7 @@ The admin tools:
 
 ## Tools
 
-The server exposes 72 Foreman REST endpoints as MCP tools: 47 read, 16 write, and 9 admin. Tool names use the `foreman_<area>_<action>` convention, such as `foreman_hosts_list`, `foreman_host_get`, `foreman_host_power`, and `foreman_hosts_bulk_build`.
+The server exposes 72 Foreman REST endpoints as MCP tools: 47 read, 13 write, and 12 admin. Tool names use the `foreman_<area>_<action>` convention, such as `foreman_hosts_list`, `foreman_host_get`, `foreman_host_power`, and `foreman_hosts_bulk_build`.
 
 Every tool declares its inputs in a JSON schema. Arguments that are not declared are rejected and nothing is sent to Foreman. Path parameters (host ids, names, ...) are validated (not empty, not `.` or `..`, no `/` or `\`, no control characters) and percent-encoded. Error text and response data are redacted (tokens, `Authorization` values, password fields) before they are truncated and returned.
 
