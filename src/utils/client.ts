@@ -147,6 +147,8 @@ export function resolveRequestCredentials(env: NodeJS.ProcessEnv = process.env):
 export const AUTH_ERROR_MESSAGE =
   "Invalid or missing Foreman credentials. Create a Personal Access Token and provide FOREMAN_USERNAME and FOREMAN_TOKEN.";
 
+export const FORBIDDEN_ERROR_MESSAGE = "The Foreman user is authenticated but lacks permission for this operation.";
+
 // ---------------------------------------------------------------------------
 // Redaction
 // ---------------------------------------------------------------------------
@@ -455,8 +457,9 @@ export async function executeForemanRequest(
   let dispatcher: Agent | undefined;
   try {
     dispatcher = getAgent();
-  } catch {
-    return { ok: false, error: { kind: "config", message: "Unable to read FOREMAN_CA_CERT_FILE." } };
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return { ok: false, error: { kind: "config", message: `Unable to read FOREMAN_CA_CERT_FILE${typeof code === "string" ? ` (${code})` : ""}.` } };
   }
 
   let response: Response;
@@ -492,7 +495,10 @@ export async function executeForemanRequest(
   }
   if (response.status === 401 || response.status === 403) {
     // Basic/PAT auth: there is nothing to refresh, so no retry.
-    return { ok: false, error: { kind: "auth", message: AUTH_ERROR_MESSAGE } };
+    const authParsed = bodyText.trim() === "" ? undefined : tryParseJson(bodyText);
+    const detail = upstreamMessage(authParsed?.ok ? authParsed.value : bodyText, bodyText);
+    const hint = response.status === 401 ? AUTH_ERROR_MESSAGE : FORBIDDEN_ERROR_MESSAGE;
+    return { ok: false, error: { kind: "auth", message: redactAndTruncate(`Foreman API returned HTTP ${response.status}: ${detail} ${hint}`, secrets) } };
   }
 
   const parsed = bodyText.trim() === "" ? ({ ok: true, value: {} } as const) : tryParseJson(bodyText);

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Lint MCP tool definitions for missing destructive-action warnings.
 // Usage: node scripts/lint-destructive-warnings.mjs [path ...]
-// Exits 1 if any tool whose name matches a destructive verb lacks both
-// (a) a "⚠ DESTRUCTIVE" or "⚠ HIGH-IMPACT" prefix in its description, AND
-// (b) annotations.destructiveHint: true.
+// Exits 1 if any tool declared with createEndpoint("name", ...) whose name
+// matches a destructive verb lacks a "⚠ DESTRUCTIVE" or "⚠ HIGH-IMPACT"
+// prefix in its description. annotations.destructiveHint is computed at
+// runtime in src/index.ts and is asserted by the tools/list test in
+// src/__tests__/foreman-tools.test.ts, not here.
 //
 // Convention: see ~/.claude/skills/mcp-vendor-scaffolding/SKILL.md §2.7b.
 
@@ -17,10 +19,11 @@ const DESTRUCTIVE_VERBS = [
   'offboard', 'terminate',
   'archive', 'unarchive',
   'quarantine_delete', 'quarantine_release',
+  'power', 'reset', 'rebuild', 'build', 'owner',
 ];
 
 const SKIP_PATTERNS = [
-  /_dropdown\b/, /_list\b/, /_search\b/, /_get\b/,
+  /_dropdown\b/, /_list\b/, /_search\b/, /_get\b/, /_get_/,
   /quarantine_list/, /quarantine_search/,
   /messages_blocked/, /clicks_blocked/,
 ];
@@ -55,7 +58,7 @@ let violations = 0;
 for (const root of roots) {
   for (const file of walk(resolve(root))) {
     const src = readFileSync(file, 'utf8');
-    const nameRegex = /name:\s*['"]([a-zA-Z0-9_]+)['"]/g;
+    const nameRegex = /createEndpoint\(\s*['"]([a-z0-9_]+)['"]/g;
     let match;
     while ((match = nameRegex.exec(src)) !== null) {
       const toolName = match[1];
@@ -64,18 +67,15 @@ for (const root of roots) {
       if (SKIP_PATTERNS.some(p => p.test(lower))) continue;
       if (!DESTRUCTIVE_VERBS.some(v => lower.includes(v))) continue;
 
-      const window = src.slice(match.index, match.index + 1200);
-      const hasWarningPrefix = /⚠\s*(DESTRUCTIVE|HIGH-IMPACT)/.test(window);
-      const hasDestructiveHint = /destructiveHint\s*:\s*true/.test(window);
+      // createEndpoint(name, method, path, tier, description, ...): read-tier tools are exempt.
+      const args = src.slice(match.index).match(/^createEndpoint\(\s*['"][^'"]+['"]\s*,\s*['"][^'"]*['"]\s*,\s*['"][^'"]*['"]\s*,\s*['"](\w+)['"]\s*,\s*['"]([^'"]*)/);
+      if (args && args[1] === 'read') continue;
+      const hasWarningPrefix = args !== null && /^⚠\s*(DESTRUCTIVE|HIGH-IMPACT)/.test(args[2]);
 
-      if (!hasWarningPrefix || !hasDestructiveHint) {
+      if (!hasWarningPrefix) {
         violations++;
         const lineNum = src.slice(0, match.index).split('\n').length;
-        const missing = [
-          !hasWarningPrefix && 'description prefix (⚠ DESTRUCTIVE/HIGH-IMPACT)',
-          !hasDestructiveHint && 'annotations.destructiveHint: true',
-        ].filter(Boolean).join(' + ');
-        console.error(`${file}:${lineNum}  ${toolName}  missing: ${missing}`);
+        console.error(`${file}:${lineNum}  ${toolName}  missing: description prefix (⚠ DESTRUCTIVE/HIGH-IMPACT)`);
       }
     }
   }

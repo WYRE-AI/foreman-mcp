@@ -144,7 +144,7 @@ export function createFreshServer(): Server {
         inputSchema: endpoint.inputSchema,
         annotations: {
           readOnlyHint: endpoint.tier === "read",
-          destructiveHint: endpoint.tier === "admin",
+          destructiveHint: endpoint.tier !== "read",
         },
       })),
   }));

@@ -283,11 +283,22 @@ describe("executeForemanRequest", () => {
     const result = await executeForemanRequest({ method: "GET", path: "/api/hosts" }, {}, { credentials: CREDS });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.kind).toBe("auth");
+    if (!result.ok) {
+      expect(result.error.kind).toBe("auth");
+      expect(result.error.message).toContain("HTTP 401: Unable to authenticate user");
+      expect(result.error.message).toContain("Personal Access Token");
+    }
     const forbidden = vi.fn(async () => jsonResponse({ error: { message: "Forbidden" } }, 403));
     vi.stubGlobal("fetch", forbidden);
-    await executeForemanRequest({ method: "GET", path: "/api/hosts" }, {}, { credentials: CREDS });
+    const denied = await executeForemanRequest({ method: "GET", path: "/api/hosts" }, {}, { credentials: CREDS });
     expect(forbidden).toHaveBeenCalledTimes(1);
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) {
+      expect(denied.error.kind).toBe("auth");
+      expect(denied.error.message).toContain("HTTP 403: Forbidden");
+      expect(denied.error.message).toContain("lacks permission");
+      expect(denied.error.message).not.toContain("Personal Access Token");
+    }
   });
 
   it("surfaces the Foreman error message, in each of its shapes", async () => {
@@ -387,7 +398,10 @@ describe("CA certificate agent", () => {
     vi.stubGlobal("fetch", fetchMock);
     const result = await executeForemanRequest({ method: "GET", path: "/api/hosts" }, {}, { credentials: CREDS });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.kind).toBe("config");
+    if (!result.ok) {
+      expect(result.error.kind).toBe("config");
+      expect(result.error.message).toContain("(ENOENT)");
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

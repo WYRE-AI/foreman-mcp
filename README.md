@@ -1,14 +1,33 @@
 # Foreman MCP Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%5E22.14%20%7C%7C%20%3E%3D24.10-brightgreen.svg)](https://nodejs.org/)
 
 An independent [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes the documented Foreman REST API as MCP tools.
 
 ## Installation
 
+The package is not published to npm. Run the container image published by the release workflow, or build from source.
+
+Container image (stdio):
+
 ```bash
-npm install @foreman/mcp
+docker run -i --rm \
+  -e MCP_TRANSPORT=stdio -e AUTH_MODE=env \
+  -e FOREMAN_BASE_URL=https://foreman.example.com \
+  -e FOREMAN_USERNAME -e FOREMAN_TOKEN \
+  ghcr.io/wyre-ai/foreman-mcp:latest
+```
+
+The image defaults to the HTTP transport in gateway mode, so stdio clients must set `MCP_TRANSPORT=stdio` and `AUTH_MODE=env` as shown. For HTTP, use [`docker-compose.yml`](docker-compose.yml).
+
+From source (Node.js `^22.14.0 || >=24.10.0`):
+
+```bash
+git clone https://github.com/WYRE-AI/foreman-mcp.git
+cd foreman-mcp
+npm ci && npm run build
+node dist/index.js
 ```
 
 ## Configuration
@@ -94,7 +113,7 @@ Every tool declares its inputs in a JSON schema. Arguments that are not declared
 
 ## Upstream license
 
-Foreman is licensed under the GNU General Public License v3.0. This MCP server is an independent MIT-licensed client that talks to Foreman only through its documented REST API. No Foreman code is copied or linked, so the GPL does not apply to this project.
+Foreman is licensed under the GNU General Public License v3.0. This MCP server is an independent Apache-2.0-licensed client that talks to Foreman only through its documented REST API. No Foreman code is copied or linked, so the GPL does not apply to this project.
 
 ## Development
 

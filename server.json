@@ -4,11 +4,11 @@
   "title": "Foreman",
   "description": "MCP server for the Foreman REST API.",
   "repository": {
-    "url": "https://github.com/asachs01/foreman-mcp",
+    "url": "https://github.com/WYRE-AI/foreman-mcp",
     "source": "github"
   },
   "version": "0.0.0",
-  "websiteUrl": "https://github.com/asachs01/foreman-mcp",
+  "websiteUrl": "https://github.com/WYRE-AI/foreman-mcp",
   "packages": [
     {
       "registryType": "oci",
@@ -44,6 +44,22 @@
           "isRequired": false,
           "isSecret": false,
           "format": "string"
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "description": "Transport; the image defaults to http for gateway deployments, so the registry launch selects stdio",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string",
+          "value": "stdio"
+        },
+        {
+          "name": "AUTH_MODE",
+          "description": "Credential source; stdio launches read FOREMAN_USERNAME / FOREMAN_TOKEN from the environment",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string",
+          "value": "env"
         }
       ]
     }

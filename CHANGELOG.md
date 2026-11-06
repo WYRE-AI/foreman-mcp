@@ -16,7 +16,7 @@
 
 ### Changed
 
-- Tiers: `foreman_hosts_bulk_build` and `foreman_hosts_bulk_change_owner` moved from write to admin (47 read / 16 write / 9 admin). `foreman_setting_update` and `foreman_host_status_delete` are described as HIGH-IMPACT rather than IRREVERSIBLE.
+- Tiers: `foreman_hosts_bulk_build` and `foreman_hosts_bulk_change_owner` moved from write to admin; `foreman_hosts_create`, `foreman_host_update` and `foreman_hostgroup_update` also moved to admin (47 read / 13 write / 12 admin). Every write and admin tool now reports `destructiveHint: true`. `foreman_setting_update` and `foreman_host_status_delete` are described as HIGH-IMPACT rather than IRREVERSIBLE.
 
 ### Fixed
 

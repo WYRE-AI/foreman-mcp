@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createFreshServer } from "../index.js";
 import { FOREMAN_ENDPOINTS } from "../tools/registry.js";
 import { TOOL_TIERS } from "../tool-tiers.js";
 import { getEnabledTiers } from "../tiers.js";
@@ -110,6 +113,46 @@ describe("tier policy", () => {
   it("describes power tools as affecting real machines", () => {
     for (const name of ["foreman_host_power", "foreman_host_boot", "foreman_hosts_bulk_change_power_state"]) {
       expect(FOREMAN_ENDPOINTS.find((e) => e.toolName === name)!.description).toMatch(/real machine/);
+    }
+  });
+});
+
+describe("Foreman tool annotations (runtime tools/list)", () => {
+  const DESTRUCTIVE_NAME = /delete|remove|destroy|disable|power|reset|rebuild|build|owner/;
+
+  async function listTools() {
+    const previous = process.env.FOREMAN_TOOL_TIERS;
+    process.env.FOREMAN_TOOL_TIERS = "read,write,admin";
+    const server = createFreshServer();
+    const client = new Client({ name: "test", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      return (await client.listTools()).tools;
+    } finally {
+      await client.close();
+      if (previous === undefined) delete process.env.FOREMAN_TOOL_TIERS;
+      else process.env.FOREMAN_TOOL_TIERS = previous;
+    }
+  }
+
+  it("marks every non-read tool destructive and every read tool read-only", async () => {
+    const tools = await listTools();
+    expect(tools).toHaveLength(72);
+    for (const tool of tools) {
+      const tier = TOOL_TIERS[tool.name].tier;
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(tier === "read");
+      expect(tool.annotations?.destructiveHint, tool.name).toBe(tier !== "read");
+    }
+  });
+
+  it("warns on every non-read tool whose name carries a destructive verb", async () => {
+    const tools = await listTools();
+    const flagged = tools.filter((t) => TOOL_TIERS[t.name].tier !== "read" && DESTRUCTIVE_NAME.test(t.name));
+    expect(flagged.length).toBeGreaterThan(0);
+    for (const tool of flagged) {
+      expect(tool.description, tool.name).toMatch(/^⚠ (DESTRUCTIVE|HIGH-IMPACT)/);
+      expect(tool.annotations?.destructiveHint, tool.name).toBe(true);
     }
   });
 });
