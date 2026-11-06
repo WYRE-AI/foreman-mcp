@@ -9,13 +9,14 @@ An independent [Model Context Protocol](https://modelcontextprotocol.io/) server
 
 The package is not published to npm. Run the container image published by the release workflow, or build from source.
 
+The server does not load `.env` on its own. Copy [`.env.example`](.env.example) to `.env`, fill it in (see [Configuration](#configuration)), and pass it explicitly as shown below.
+
 Container image (stdio):
 
 ```bash
 docker run -i --rm \
+  --env-file .env \
   -e MCP_TRANSPORT=stdio -e AUTH_MODE=env \
-  -e FOREMAN_BASE_URL=https://foreman.example.com \
-  -e FOREMAN_USERNAME -e FOREMAN_TOKEN \
   ghcr.io/wyre-ai/foreman-mcp:latest
 ```
 
@@ -27,12 +28,12 @@ From source (Node.js `^22.14.0 || >=24.10.0`):
 git clone https://github.com/WYRE-AI/foreman-mcp.git
 cd foreman-mcp
 npm ci && npm run build
-node dist/index.js
+node --env-file=.env dist/index.js
 ```
 
 ## Configuration
 
-Copy [`.env.example`](.env.example) and set:
+Copy [`.env.example`](.env.example) to `.env` and set:
 
 | Variable | Required | Description |
 |---|---|---|
